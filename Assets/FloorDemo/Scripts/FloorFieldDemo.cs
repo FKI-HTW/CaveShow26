@@ -11,7 +11,7 @@ using TrackingState = Windows.Kinect.TrackingState;
 namespace CaveShow
 {
 	/// <summary>
-	/// Tracking-Demo: teilt den CAVE-Boden in farbige Felder (Standard 2x2) und
+	/// Tracking-Demo: teilt den CAVE-Boden in farbige Felder (Standard 4x4) und
 	/// zeigt auf der Frontwand an, auf welchem Feld die getrackte Person steht.
 	/// Baut alle sichtbaren Objekte zur Laufzeit selbst auf, die Szene braucht nur
 	/// das CAVE-Prefab und dieses Skript.
@@ -44,8 +44,8 @@ namespace CaveShow
 		public KinectTracker tracker;
 
 		[Header("Felder")]
-		[Range(1, 6)] public int columns = 2;
-		[Range(1, 6)] public int rows = 2;
+		[Range(1, 6)] public int columns = 4;
+		[Range(1, 6)] public int rows = 4;
 		[Tooltip("Größe der Spielfläche in Metern (Breite, Tiefe). 0 = ganzer CAVE-Boden.")]
 		public Vector2 areaSize = Vector2.zero;
 		[Tooltip("Lücke zwischen den Feldern in Metern.")]

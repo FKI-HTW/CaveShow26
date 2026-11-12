@@ -153,8 +153,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   environment: {fileID: 361854571}
   tracker: {fileID: 361854570}
-  columns: 2
-  rows: 2
+  columns: 4
+  rows: 4
   areaSize: {x: 0, y: 0}
   gap: 0.04
   palette:

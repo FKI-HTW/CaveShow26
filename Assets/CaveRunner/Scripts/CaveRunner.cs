@@ -1,6 +1,16 @@
+// Windows-Spracherkennung nur dort mitkompilieren, wo es sie gibt:
+// im Windows-Build (UNITY_STANDALONE_WIN) und im Windows-Editor – aber nie im macOS-/Linux-Editor,
+// auch wenn dort als Build-Ziel "Windows" eingestellt ist (dann ist UNITY_STANDALONE_WIN nämlich auch gesetzt).
+#if (UNITY_STANDALONE_WIN && !UNITY_EDITOR_OSX && !UNITY_EDITOR_LINUX) || UNITY_EDITOR_WIN
+#define WINDOWS_SPEECH
+#endif
+
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+#if WINDOWS_SPEECH
+using UnityEngine.Windows.Speech;
+#endif
 
 /// <summary>
 /// CAVE-RUNNER – das Spiel (First Person): Tunnel, Hindernisse, Wörter, Anzeige.
@@ -18,11 +28,15 @@ using UnityEngine;
 ///          Beim Spurwechsel wird die Welt seitlich verschoben. Die CAVE selbst bleibt stehen,
 ///          sonst käme das Kopf-Tracking (Perspektive und Gesten) durcheinander.
 ///
+/// WÖRTER: Im Windows-Build hört die Spracherkennung (VoiceRecognizer, unten in dieser Datei) über das Mikrofon mit.
+///         Auf dem Mac gibt es nur den Simulationsmodus -> Wörter mit R / F bewerten.
+///
 /// TASTEN (Betreuung/Test): Enter/Leertaste/R = Start, ←/→ = Spur, Leertaste/↑ = Springen, ↓ = Ducken,
-///                          Enter = Wort richtig, Backspace = Wort falsch, V = Ansicht, Esc = Beenden.
+///                          R oder Enter = Wort richtig, F oder Backspace = Wortfehler,
+///                          P = Pause (z. B. bei Mikrofon-Problemen, zählt keinen Fehler), V = Ansicht, Esc = Beenden.
 ///
 /// SCHNITTSTELLEN
-///   Steuerung:      runner.StartGame(), SetLane(0..2), MoveLeft(), MoveRight(), Jump(), Duck()
+///   Steuerung:      runner.StartGame(), SetLane(0..2), MoveLeft(), MoveRight(), Jump(), Duck(), TogglePause()
 ///   Worterkennung:  runner.WordAppeared += wort => ...;   runner.SubmitRecognizedWord("small");
 /// </summary>
 public class CaveRunner : MonoBehaviour
@@ -50,6 +64,16 @@ public class CaveRunner : MonoBehaviour
     public float boxHeight = 0.6f;        // Kiste -> ausweichen
     public float hurdleHeight = 0.3f;     // niedriger Balken -> springen
     public float barBottomHeight = 1.3f;  // Stange -> ducken
+    [Tooltip("Toleranz (m) vor und hinter der Person: Wer irgendwann in diesem Bereich in der Luft bzw. geduckt ist, hat das Hindernis geschafft.")]
+    public float avoidTolerance = 0.9f;
+
+    public enum CollisionMode { InstantGameOver, SlowDownAndShake, IgnoreForTesting }
+    [Header("Kollision")]
+    [Tooltip("Was passiert bei einem Treffer? InstantGameOver = Runde verloren, SlowDownAndShake = kurz langsamer + Wackeln, IgnoreForTesting = nur mitzählen.")]
+    public CollisionMode collisionMode = CollisionMode.SlowDownAndShake;
+    [Tooltip("Nur SlowDownAndShake: Tempo-Faktor und Dauer (s) nach einem Treffer.")]
+    public float slowFactor = 0.4f;
+    public float slowDuration = 1.5f;
 
     [Header("Wörter")]
     public string[] words = { "SMALL", "HOUSE", "GREEN", "WATER", "APPLE", "TIGER", "CLOUD", "LIGHT", "STONE", "RIVER" };
@@ -60,6 +84,7 @@ public class CaveRunner : MonoBehaviour
     public float wordSpeed = 4.5f;
     public float wordHeight = 2.6f;
     public float[] pauseOptions = { 0.5f, 0.5f, 3f, 10f, 15f, 20f };
+    public VoiceRecognizer voice = new VoiceRecognizer();
 
     [Header("Steuerung / Kamera")]
     [Tooltip("Tasten für Betreuung und Test (siehe Kommentar oben).")]
@@ -85,6 +110,8 @@ public class CaveRunner : MonoBehaviour
     public State GameState { get; private set; }
     /// <summary>Countdown oder Runde läuft -> Spur, Springen und Ducken sind aktiv.</summary>
     public bool IsPlaying => GameState == State.Countdown || GameState == State.Running;
+    /// <summary>Pause (Taste P): alles steht, Steuerung und Wörter werden ignoriert.</summary>
+    public bool Paused { get; private set; }
     public int CurrentLane { get; private set; } = 1;
     public int CorrectWords { get; private set; }
     public int WordErrors { get; private set; }
@@ -105,7 +132,7 @@ public class CaveRunner : MonoBehaviour
     const float DespawnZ = -12f, SpawnZ = 80f, JumpDuration = 0.8f, DuckDuration = 0.9f;
 
     enum ObstacleType { Box, Hurdle, Bar }
-    class Obstacle { public Transform t; public ObstacleType type; public int lane; public bool passed; }
+    class Obstacle { public Transform t; public ObstacleType type; public int lane; public bool passed, laneChecked, inLane, avoided; }
     class Board { public Transform t; public string word; public Renderer frame; public bool done; }
 
     // =====================================================================
@@ -126,7 +153,8 @@ public class CaveRunner : MonoBehaviour
     List<string> wordQueue = new List<string>();
     int wordsShown;
     float roundTime, countdown, nextWordTime, nextObstacleIn = 30f;
-    float laneX, jumpTime = -1f, jumpOffset, duckTimer, duckAmount, actionTimer, shake;
+    float laneX, jumpTime = -1f, jumpOffset, duckTimer, duckAmount, actionTimer, shake, slowTimer;
+    string lostReason = "";
 
     bool IsDucking => duckTimer > 0f;
     bool IsAirborne => jumpTime >= 0f && jumpOffset > 0.15f;
@@ -142,23 +170,31 @@ public class CaveRunner : MonoBehaviour
     public void SetLane(int lane)
     {
         lane = Mathf.Clamp(lane, 0, 2);
-        if (!IsPlaying || lane == CurrentLane) return;
+        if (!IsPlaying || Paused || lane == CurrentLane) return;
         ShowAction(lane < CurrentLane ? "Links" : "Rechts");
         CurrentLane = lane;
     }
 
     public void Jump()
     {
-        if (!IsPlaying || jumpTime >= 0f) return;
+        if (!IsPlaying || Paused || jumpTime >= 0f) return;
         duckTimer = 0f; jumpTime = 0f; ShowAction("Sprung");
     }
 
     /// <summary>Ducken. Solange die Person unten bleibt, einfach weiter aufrufen.</summary>
     public void Duck()
     {
-        if (!IsPlaying) return;
+        if (!IsPlaying || Paused) return;
         if (!IsDucking) ShowAction("Ducken");
         jumpTime = -1f; jumpOffset = 0f; duckTimer = DuckDuration;
+    }
+
+    /// <summary>Pause ein/aus. Friert das Spiel ein (Time.timeScale = 0), es wird kein Wortfehler gezählt.</summary>
+    public void TogglePause()
+    {
+        if (!IsPlaying) return;
+        Paused = !Paused;
+        Time.timeScale = Paused ? 0f : 1f;
     }
 
     // =====================================================================
@@ -168,7 +204,7 @@ public class CaveRunner : MonoBehaviour
     /// <summary>Erkanntes Wort übergeben. Gibt true zurück, wenn es zur aktuellen Tafel passt.</summary>
     public bool SubmitRecognizedWord(string recognized)
     {
-        if (GameState != State.Running || activeBoard == null || string.IsNullOrEmpty(recognized)) return false;
+        if (Paused || GameState != State.Running || activeBoard == null || string.IsNullOrEmpty(recognized)) return false;
         bool match = string.Equals(recognized.Trim(), activeBoard.word, StringComparison.OrdinalIgnoreCase);
         if (match) FinishWord(true);
         return match;
@@ -182,7 +218,7 @@ public class CaveRunner : MonoBehaviour
         obstacles.Clear(); boards.Clear(); activeBoard = null;
         CorrectWords = WordErrors = Hits = wordsShown = 0;
         roundTime = 0f; nextWordTime = 2f; nextObstacleIn = 30f;
-        CurrentLane = 1; laneX = 0f; jumpTime = -1f; jumpOffset = 0f; duckTimer = 0f;
+        CurrentLane = 1; laneX = 0f; jumpTime = -1f; jumpOffset = 0f; duckTimer = 0f; slowTimer = 0f;
 
         wordQueue = new List<string>(words);
         for (int i = 0; i < wordQueue.Count; i++)
@@ -247,6 +283,14 @@ public class CaveRunner : MonoBehaviour
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = RenderSettings.fogColor;
         }
+        voice.WordRecognized += word => SubmitRecognizedWord(word);
+        voice.StartListening(words);
+    }
+
+    void OnDestroy()
+    {
+        voice.Stop();
+        Time.timeScale = 1f;
     }
 
     /// <summary>Zwischen First-Person-Ansicht (ein Bildschirm) und Ausgabe auf die CAVE-Wände umschalten.</summary>
@@ -377,14 +421,14 @@ public class CaveRunner : MonoBehaviour
 
     string BigText()
     {
+        if (Paused) return "PAUSE\n\nP = weiter";
         switch (GameState)
         {
             case State.Start: return "CAVE-RUNNER\n\n" + StartHint;
             case State.Countdown: return Mathf.CeilToInt(countdown).ToString();
             case State.Won: return $"GEWONNEN!\n{CorrectWords} von {words.Length} richtig\n\n{StartHint}";
             case State.Lost:
-                return (WordErrors >= maxWordErrors ? $"VERLOREN!\n{WordErrors} Wortfehler" : $"VERLOREN!\nnur {CorrectWords} von {words.Length} richtig")
-                     + "\n\n" + StartHint;
+                return "VERLOREN!\n" + lostReason + "\n\n" + StartHint;
             default: return "";
         }
     }
@@ -392,6 +436,8 @@ public class CaveRunner : MonoBehaviour
     void Update()
     {
         if (Input.GetKeyDown(KeyCode.Escape)) Application.Quit();
+        if (keyboardInput && Input.GetKeyDown(KeyCode.P)) TogglePause();
+        if (Paused) { bigText.text = BigText(); return; }
         if (keyboardInput) ReadKeyboard();
         float dt = Time.deltaTime;
 
@@ -403,10 +449,14 @@ public class CaveRunner : MonoBehaviour
         else if (GameState == State.Running)
         {
             roundTime += dt;
-            MoveWorld(speed * dt);
-            UpdateWords(dt);
+            if (slowTimer > 0f) slowTimer -= dt;
+            MoveWorld(speed * (slowTimer > 0f ? slowFactor : 1f) * dt);
+            if (GameState == State.Running) UpdateWords(dt);
             if (GameState == State.Running && TimeLeft <= 0f)
-                SetState(CorrectWords >= wordsToWin ? State.Won : State.Lost);
+            {
+                if (CorrectWords >= wordsToWin) SetState(State.Won);
+                else Lose($"nur {CorrectWords} von {words.Length} richtig");
+            }
         }
 
         // Spieler: Spur, Sprung, Ducken
@@ -426,6 +476,13 @@ public class CaveRunner : MonoBehaviour
         hudText.text = GameState == State.Start ? "" :
             $"Zeit: {Mathf.CeilToInt(TimeLeft)} s     Richtig: {CorrectWords}/{words.Length}     Fehler: {WordErrors}/{maxWordErrors}     Treffer: {Hits}";
         if (!string.IsNullOrEmpty(InfoLine)) hudText.text += "\n" + InfoLine;
+        if (!string.IsNullOrEmpty(voice.Status)) hudText.text += "\n" + voice.Status;
+    }
+
+    void Lose(string reason)
+    {
+        lostReason = reason;
+        SetState(State.Lost);
     }
 
     void LateUpdate()
@@ -454,8 +511,9 @@ public class CaveRunner : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.S)) Duck();
         if (GameState == State.Running && activeBoard != null)
         {
-            if (Input.GetKeyDown(KeyCode.Return)) FinishWord(true);
-            else if (Input.GetKeyDown(KeyCode.Backspace)) FinishWord(false);
+            // Betreuung / Test ohne Mikrofon: Wort von Hand bewerten
+            if (Input.GetKeyDown(KeyCode.R) || Input.GetKeyDown(KeyCode.Return)) FinishWord(true);
+            else if (Input.GetKeyDown(KeyCode.F) || Input.GetKeyDown(KeyCode.Backspace)) FinishWord(false);
         }
     }
 
@@ -470,7 +528,7 @@ public class CaveRunner : MonoBehaviour
             seg.localPosition = p;
         }
 
-        // Hindernisse bewegen + Kollision bei z = 0 (da steht die Person)
+        // Hindernisse bewegen
         for (int i = obstacles.Count - 1; i >= 0; i--)
         {
             var o = obstacles[i];
@@ -478,17 +536,16 @@ public class CaveRunner : MonoBehaviour
             p.z -= move;
             o.t.localPosition = p;
 
-            if (!o.passed && p.z <= 0f)
+            // Kollision rund um z = 0 (da steht die Person). Springen/Ducken muss nicht auf den Punkt genau sitzen:
+            // es zählt, wenn es irgendwann zwischen +avoidTolerance und -avoidTolerance passiert.
+            if (!o.passed && p.z <= avoidTolerance)
             {
-                o.passed = true;
-                bool avoided = o.type == ObstacleType.Hurdle ? IsAirborne
-                             : o.type == ObstacleType.Bar ? IsDucking
-                             : false;
-                if (o.lane == CurrentLane && !avoided)
+                if (o.type == ObstacleType.Hurdle ? IsAirborne : o.type == ObstacleType.Bar && IsDucking) o.avoided = true;
+                if (!o.laneChecked && p.z <= 0f) { o.laneChecked = true; o.inLane = o.lane == CurrentLane; }
+                if (p.z <= -avoidTolerance)
                 {
-                    Hits++;
-                    shake = 0.3f;
-                    ShowAction("TREFFER!", new Color(1f, 0.25f, 0.2f));
+                    o.passed = true;
+                    if (o.inLane && !o.avoided) OnCollision();
                 }
             }
             if (p.z < DespawnZ) { Destroy(o.t.gameObject); obstacles.RemoveAt(i); }
@@ -503,6 +560,25 @@ public class CaveRunner : MonoBehaviour
             if (type == ObstacleType.Box && UnityEngine.Random.value < 0.25f)
                 SpawnObstacle(ObstacleType.Box, (lane + UnityEngine.Random.Range(1, 3)) % 3); // eine Spur bleibt frei
             nextObstacleIn = UnityEngine.Random.Range(obstacleMinGap, obstacleMaxGap);
+        }
+    }
+
+    void OnCollision()
+    {
+        Hits++;
+        switch (collisionMode)
+        {
+            case CollisionMode.InstantGameOver:
+                shake = 0.3f;
+                Lose("Hindernis getroffen");
+                break;
+            case CollisionMode.SlowDownAndShake:
+                shake = 0.3f;
+                slowTimer = slowDuration;
+                ShowAction("TREFFER!", new Color(1f, 0.25f, 0.2f));
+                break;
+            case CollisionMode.IgnoreForTesting:
+                break; // nur mitzählen (Anzeige "Treffer")
         }
     }
 
@@ -538,7 +614,7 @@ public class CaveRunner : MonoBehaviour
         float maxPause = remaining > 0 ? Mathf.Max(0.5f, (TimeLeft - remaining * travel - 1f) / remaining) : 0f;
         nextWordTime = roundTime + Mathf.Min(pauseOptions[UnityEngine.Random.Range(0, pauseOptions.Length)], maxPause);
 
-        if (WordErrors >= maxWordErrors) SetState(State.Lost);
+        if (WordErrors >= maxWordErrors) Lose($"{WordErrors} Wortfehler");
     }
 
     // =====================================================================
@@ -605,4 +681,87 @@ public class CaveRunner : MonoBehaviour
         go.GetComponent<MeshRenderer>().sharedMaterial = tm.font.material;
         return tm;
     }
+}
+
+// =========================================================================
+//  SPRACHERKENNUNG: Windows = KeywordRecognizer (offline, Mikrofon),
+//  macOS = Simulationsmodus (Wörter mit den Tasten R / F bewerten).
+// =========================================================================
+
+[Serializable]
+public class VoiceRecognizer
+{
+    [Tooltip("Aus = keine Spracherkennung, Wörter nur mit den Tasten R / F bewerten.")]
+    public bool enabled = true;
+
+    /// <summary>Ein Wort aus der Liste wurde gehört (kommt im Unity-Hauptthread an).</summary>
+    public event Action<string> WordRecognized;
+    /// <summary>Kurzer Zustand für die Anzeige.</summary>
+    public string Status { get; private set; } = "";
+
+    /// <summary>Zum Testen ohne Mikrofon: tut so, als wäre das Wort gehört worden.</summary>
+    public void Simulate(string word) => WordRecognized?.Invoke(word);
+
+#if WINDOWS_SPEECH
+    KeywordRecognizer recognizer;
+
+    public void StartListening(string[] words)
+    {
+        Stop();
+        if (!enabled) { Status = "Sprache: aus (R = richtig, F = Fehler)"; return; }
+        try
+        {
+            if (!PhraseRecognitionSystem.isSupported)
+                throw new NotSupportedException("Windows-Spracherkennung wird auf diesem System nicht unterstützt.");
+
+            var keywords = new List<string>();
+            foreach (var w in words)
+            {
+                string k = (w ?? "").Trim().ToLowerInvariant();
+                if (k.Length > 0 && !keywords.Contains(k)) keywords.Add(k);
+            }
+            // ConfidenceLevel.Low: lieber einmal zu großzügig als ein richtig gelesenes Wort verpassen
+            recognizer = new KeywordRecognizer(keywords.ToArray(), ConfidenceLevel.Low);
+            recognizer.OnPhraseRecognized += OnPhrase;
+            PhraseRecognitionSystem.OnError += OnError;
+            recognizer.Start();
+            Status = "Sprache: Mikrofon aktiv";
+            Debug.Log("VoiceRecognizer: Windows-Spracherkennung läuft (" + string.Join(", ", keywords) + ").");
+        }
+        catch (Exception e)
+        {
+            recognizer = null;
+            Status = "Sprache: FEHLER (R = richtig, F = Fehler)";
+            Debug.LogWarning("VoiceRecognizer: Spracherkennung konnte nicht gestartet werden – " + e.Message +
+                             "\nPrüfen: Mikrofon angeschlossen? Windows-Einstellungen > Datenschutz > Spracherkennung/Mikrofon erlaubt? Englisches Sprachpaket installiert?");
+        }
+    }
+
+    public void Stop()
+    {
+        if (recognizer == null) return;
+        PhraseRecognitionSystem.OnError -= OnError;
+        recognizer.OnPhraseRecognized -= OnPhrase;
+        if (recognizer.IsRunning) recognizer.Stop();
+        recognizer.Dispose();
+        recognizer = null;
+    }
+
+    void OnPhrase(PhraseRecognizedEventArgs args) => WordRecognized?.Invoke(args.text);
+
+    void OnError(SpeechError error)
+    {
+        Status = "Sprache: FEHLER " + error + " (P = Pause, R/F = von Hand)";
+        Debug.LogWarning("VoiceRecognizer: Fehler der Spracherkennung: " + error);
+    }
+#else
+    public void StartListening(string[] words)
+    {
+        Status = "Sprache: Simulation (R = richtig, F = Fehler)";
+        Debug.Log("VoiceRecognizer: Mac-Simulationsmodus für Sprache aktiv – keine Windows-Spracherkennung. " +
+                  "Taste R = Wort richtig, Taste F = Wortfehler.");
+    }
+
+    public void Stop() { }
+#endif
 }

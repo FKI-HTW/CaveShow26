@@ -159,9 +159,9 @@ MonoBehaviour:
   restartDelay: 2
   leanThreshold: 0.15
   duckThreshold: 0.35
-  jumpSquatDepth: 0.12
-  jumpUpSpeed: 0.8
-  jumpRise: 0.12
+  jumpSquatDepth: 0.08
+  jumpUpSpeed: 0.7
+  jumpRise: 0.07
   showDebug: 1
 --- !u!114 &1744394737
 MonoBehaviour:

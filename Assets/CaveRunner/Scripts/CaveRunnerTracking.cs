@@ -17,8 +17,7 @@ using TrackingState = Windows.Kinect.TrackingState;
 /// Also: gerade hinstellen, Arm heben, stehen bleiben bis der Countdown läuft. Taste C merkt die Position neu.
 ///
 /// Gelesen werden die Skelettdaten (Kopf, Hände) der Person, deren Kopf auch die Perspektive der CAVE steuert.
-/// Die Wörter bewertet weiterhin die Betreuung (Enter / Backspace) oder eine Spracherkennung
-/// über CaveRunner.SubmitRecognizedWord.
+/// Die Wörter bewertet die Spracherkennung in CaveRunner (Windows) oder die Betreuung mit den Tasten R / F.
 /// </summary>
 [RequireComponent(typeof(CaveRunner))]
 public class CaveRunnerTracking : MonoBehaviour
@@ -41,11 +40,11 @@ public class CaveRunnerTracking : MonoBehaviour
     [Tooltip("So weit (m) muss der Kopf unter die Standhöhe, um zu ducken.")]
     public float duckThreshold = 0.35f;
     [Tooltip("Mindest-Tiefe (m) der Kniebeuge vor dem Sprung.")]
-    public float jumpSquatDepth = 0.12f;
-    [Tooltip("So schnell (m/s) muss der Kopf danach nach oben, damit es als Sprung zählt.")]
-    public float jumpUpSpeed = 0.8f;
-    [Tooltip("So weit (m) über der Standhöhe zählt der Kopf als echter Sprung.")]
-    public float jumpRise = 0.12f;
+    public float jumpSquatDepth = 0.08f;
+    [Tooltip("So schnell (m/s) muss der Kopf danach nach oben, damit es als Sprung zählt. Der Wert \"max\" in der Anzeige zeigt, was beim letzten Versuch erreicht wurde.")]
+    public float jumpUpSpeed = 0.7f;
+    [Tooltip("So weit (m) über der Standhöhe zählt der Kopf als echter Sprung (Hüpfer ohne Kniebeuge).")]
+    public float jumpRise = 0.07f;
 
     [Tooltip("Kopf-Werte in der Anzeige einblenden (zum Einstellen der Schwellen).")]
     public bool showDebug = true;
@@ -62,6 +61,13 @@ public class CaveRunnerTracking : MonoBehaviour
 
     Vector3 headPos, standPos;   // Kopf geglättet / beim Start gemerkt, in CAVE-Koordinaten (x = rechts, y = hoch)
     float headVelY, squatTimer, holdTimer, gestureLockedUntil;
+    float peakVelY, peakTimer;   // höchste Geschwindigkeit nach oben der letzten Sekunden (nur Anzeige)
+
+    // Die letzten ungeglätteten Kopfhöhen – daraus wird die Geschwindigkeit nach oben berechnet.
+    const int HistorySize = 24;
+    const float VelocityWindow = 0.12f; // Sekunden
+    readonly float[] historyTime = new float[HistorySize], historyY = new float[HistorySize];
+    int historyNext, historyCount;
     bool calibrated, gestureArmed;
     int zone = 1;
 
@@ -108,6 +114,7 @@ public class CaveRunnerTracking : MonoBehaviour
         standPos = headPos;
         zone = 1;
         squatTimer = 0f;
+        peakVelY = 0f;
     }
 
     /// <summary>Test ohne Kinect: eine Person vorgeben (Kopfposition in CAVE-Koordinaten, Meter).</summary>
@@ -122,6 +129,7 @@ public class CaveRunnerTracking : MonoBehaviour
 
     void Update()
     {
+        if (runner.Paused) return; // Pause (Taste P): keine Gesten auswerten
         float dt = Time.deltaTime;
         bool wasPresent = HasPlayer;
         HasPlayer = ReadBody(out Vector3 head, out bool handRaised);
@@ -135,11 +143,16 @@ public class CaveRunnerTracking : MonoBehaviour
             return;
         }
 
-        // Kopfposition leicht glätten (die Kinect zittert und liefert nur 30 Werte pro Sekunde)
-        if (!wasPresent) { headPos = head; headVelY = 0f; }
-        float prevY = headPos.y;
-        headPos = Vector3.Lerp(headPos, head, 1f - Mathf.Exp(-15f * dt));
-        headVelY = Mathf.Lerp(headVelY, (headPos.y - prevY) / Mathf.Max(dt, 0.0001f), 1f - Mathf.Exp(-20f * dt));
+        // Kopfposition leicht glätten (die Kinect zittert und liefert nur 30 Werte pro Sekunde).
+        // Seitlich etwas stärker (ruhige Spur), in der Höhe nur wenig – sonst geht ein kurzer Hüpfer verloren.
+        if (!wasPresent) { headPos = head; headVelY = 0f; historyCount = 0; }
+        float side = 1f - Mathf.Exp(-15f * dt), up = 1f - Mathf.Exp(-30f * dt);
+        headPos = new Vector3(Mathf.Lerp(headPos.x, head.x, side), Mathf.Lerp(headPos.y, head.y, up), Mathf.Lerp(headPos.z, head.z, side));
+        // Geschwindigkeit direkt aus den ungeglätteten Werten der letzten Zehntelsekunde (nicht aus der geglätteten Kurve,
+        // die bei einem Sprung viel zu langsam aussieht).
+        headVelY = VelocityUp(Time.unscaledTime, head.y);
+        if (headVelY > peakVelY) { peakVelY = headVelY; peakTimer = 2f; }
+        else if ((peakTimer -= dt) <= 0f) peakVelY = Mathf.Max(headVelY, 0f);
         if (!calibrated) Calibrate();
 
         if (runner.keyboardInput && Input.GetKeyDown(KeyCode.C)) { Calibrate(); runner.ShowAction("Kalibriert"); }
@@ -148,7 +161,7 @@ public class CaveRunnerTracking : MonoBehaviour
         else ReadStartGesture(dt, handRaised);
 
         runner.InfoLine = showDebug
-            ? $"Kopf  seitlich: {headPos.x - standPos.x:+0.00;-0.00} m   Höhe: {headPos.y - standPos.y:+0.00;-0.00} m   hoch: {headVelY:+0.0;-0.0} m/s"
+            ? $"Kopf  seitlich: {headPos.x - standPos.x:+0.00;-0.00} m   Höhe: {headPos.y - standPos.y:+0.00;-0.00} m   hoch: {headVelY:+0.0;-0.0} m/s (max {peakVelY:0.0})"
             : "";
     }
 
@@ -177,19 +190,33 @@ public class CaveRunnerTracking : MonoBehaviour
 
     void ReadMoves(float dt)
     {
-        // Spur: links von der Standposition = links, Mitte = Mitte, rechts = rechts (mit etwas Puffer gegen Flackern).
+        // Spur: links von der Standposition = links, Mitte = Mitte, rechts = rechts.
+        // Zur Seite ab leanThreshold, zurück in die Mitte schon ab 70 % davon (Puffer gegen Flackern) –
+        // man muss also nicht wieder exakt auf dem Startpunkt stehen.
         // Nur beim Wechsel der Zone umschalten -> die Tastatur funktioniert parallel weiter.
         float dx = headPos.x - standPos.x;
         int newZone = dx < -leanThreshold ? 0 : dx > leanThreshold ? 2
-                    : Mathf.Abs(dx) < leanThreshold * 0.5f ? 1 : zone;
+                    : Mathf.Abs(dx) < leanThreshold * 0.7f ? 1 : zone;
         if (newZone != zone) { zone = newZone; runner.SetLane(zone); }
 
         float dy = standPos.y - headPos.y; // > 0 = tiefer als normal
 
-        // Springen: Kniebeuge und kurz danach schnell hoch – oder der Kopf ist deutlich über der Standhöhe (echter Sprung)
-        if (dy > jumpSquatDepth) squatTimer = 0.7f;
+        // Standhöhe langsam nachführen, solange die Person ruhig und ungefähr aufrecht steht.
+        // (Beim Start mit erhobenem Arm steht man oft etwas gestreckter als danach.)
+        if (Mathf.Abs(dy) < 0.06f && Mathf.Abs(headVelY) < 0.15f)
+        {
+            standPos.y = Mathf.Lerp(standPos.y, headPos.y, 1f - Mathf.Exp(-dt / 0.7f));
+            dy = standPos.y - headPos.y;
+        }
+
+        // Springen, zwei Wege:
+        //  1) Kniebeuge und kurz danach schnell hoch
+        //  2) Hüpfer: der Kopf ist über der Standhöhe und bewegt sich noch nach oben
+        if (dy > jumpSquatDepth) squatTimer = 0.8f;
         else if (squatTimer > 0f) squatTimer -= dt;
-        if ((headVelY > jumpUpSpeed && squatTimer > 0f) || dy < -jumpRise)
+        bool squatJump = squatTimer > 0f && headVelY > jumpUpSpeed;
+        bool hop = dy < -jumpRise && headVelY > 0.2f;
+        if (squatJump || hop)
         {
             squatTimer = 0f;
             runner.Jump();
@@ -197,6 +224,28 @@ public class CaveRunnerTracking : MonoBehaviour
 
         // Ducken: solange der Kopf tief ist (aber nicht, während man gerade hochschnellt)
         if (dy > duckThreshold && headVelY < 0.5f) runner.Duck();
+    }
+
+    /// <summary>Neue Kopfhöhe merken und die Geschwindigkeit nach oben (m/s) über die letzten ~0,12 s liefern.</summary>
+    float VelocityUp(float now, float y)
+    {
+        historyTime[historyNext] = now;
+        historyY[historyNext] = y;
+        historyNext = (historyNext + 1) % HistorySize;
+        historyCount = Mathf.Min(historyCount + 1, HistorySize);
+
+        // Ältesten Wert suchen, der noch im Zeitfenster liegt
+        float oldestTime = now, oldestY = y;
+        for (int i = 0; i < historyCount; i++)
+        {
+            if (now - historyTime[i] <= VelocityWindow && historyTime[i] < oldestTime)
+            {
+                oldestTime = historyTime[i];
+                oldestY = historyY[i];
+            }
+        }
+        float span = now - oldestTime;
+        return span >= 0.04f ? (y - oldestY) / span : headVelY; // zu wenig Daten -> alten Wert behalten
     }
 
     // =====================================================================

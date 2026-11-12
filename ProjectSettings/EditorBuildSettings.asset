@@ -4,5 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/FloorDemo/FloorFieldDemo.unity
+    guid: f12f060eecaee460bb134a8e446092e6
   m_configObjects: {}

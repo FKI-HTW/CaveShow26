@@ -14,9 +14,9 @@ OcclusionCullingSettings:
 RenderSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 9
-  m_Fog: 0
+  m_Fog: 1
   m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
-  m_FogMode: 3
+  m_FogMode: 1
   m_FogDensity: 0.01
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
@@ -122,7 +122,117 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1001 &915794847
+--- !u!1 &1744394735
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1744394738}
+  - component: {fileID: 1744394737}
+  - component: {fileID: 1744394736}
+  m_Layer: 0
+  m_Name: Cave Runner
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1744394736
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1744394735}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1eaa8f70f94fd411ba8612051e332f08, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  environment: {fileID: 1919615474}
+  tracker: {fileID: 1919615473}
+  handAboveHead: 0.1
+  startHoldTime: 1
+  restartDelay: 2
+  leanThreshold: 0.15
+  duckThreshold: 0.35
+  jumpSquatDepth: 0.12
+  jumpUpSpeed: 0.8
+  jumpRise: 0.12
+  showDebug: 1
+--- !u!114 &1744394737
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1744394735}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f19bc260538df4a1cb9de955cdaf9950, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  roundDuration: 90
+  wordsToWin: 8
+  maxWordErrors: 3
+  tunnelWidth: 6.5
+  tunnelHeight: 4.5
+  segmentLength: 10
+  segmentCount: 10
+  speed: 6
+  obstacleMinGap: 20
+  obstacleMaxGap: 32
+  boxHeight: 0.6
+  hurdleHeight: 0.3
+  barBottomHeight: 1.3
+  words:
+  - SMALL
+  - HOUSE
+  - GREEN
+  - WATER
+  - APPLE
+  - TIGER
+  - CLOUD
+  - LIGHT
+  - STONE
+  - RIVER
+  wordSpawnZ: 45
+  readLimitZ: 8
+  wordSpeed: 4.5
+  wordHeight: 2.6
+  pauseOptions:
+  - 0.5
+  - 0.5
+  - 3
+  - 10
+  - 15
+  - 20
+  keyboardInput: 1
+  view: 0
+  jumpHeight: 0.9
+  eyeHeight: 1.7
+  duckEyeHeight: 1
+  surfaceMaterial: {fileID: 2100000, guid: 8d0838ed14f664b9f9928c51649ea701, type: 2}
+  glowMaterial: {fileID: 2100000, guid: 3f38e22f61946400d959a26176b2e0cd, type: 2}
+--- !u!4 &1744394738
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1744394735}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &1919615472
 PrefabInstance:
   m_ObjectHideFlags: 0
   serializedVersion: 2
@@ -179,10 +289,10 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 19609b0851fe93a4c8f5c95f79c712c2, type: 3}
---- !u!114 &915794848 stripped
+--- !u!114 &1919615473 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 5135390767285829288, guid: 19609b0851fe93a4c8f5c95f79c712c2, type: 3}
-  m_PrefabInstance: {fileID: 915794847}
+  m_PrefabInstance: {fileID: 1919615472}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 0}
   m_Enabled: 1
@@ -190,10 +300,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e3259f9c31f02184c98b473041edfe19, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
---- !u!114 &915794849 stripped
+--- !u!114 &1919615474 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 7705442372244757364, guid: 19609b0851fe93a4c8f5c95f79c712c2, type: 3}
-  m_PrefabInstance: {fileID: 915794847}
+  m_PrefabInstance: {fileID: 1919615472}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 0}
   m_Enabled: 1
@@ -201,116 +311,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7cdf92afc8eb9524eaab322f4704fe2a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
---- !u!1 &1075392605
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1075392608}
-  - component: {fileID: 1075392607}
-  - component: {fileID: 1075392606}
-  m_Layer: 0
-  m_Name: Cave Runner
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1075392606
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1075392605}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1eaa8f70f94fd411ba8612051e332f08, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  environment: {fileID: 915794849}
-  tracker: {fileID: 915794848}
-  handAboveHead: 0.1
-  startHoldTime: 1
-  restartDelay: 2
-  leanThreshold: 0.15
-  duckThreshold: 0.35
-  jumpSquatDepth: 0.12
-  jumpUpSpeed: 0.8
-  jumpRise: 0.12
-  showDebug: 1
---- !u!114 &1075392607
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1075392605}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f19bc260538df4a1cb9de955cdaf9950, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  roundDuration: 90
-  wordsToWin: 8
-  maxWordErrors: 3
-  tunnelWidth: 6.5
-  tunnelHeight: 4.5
-  segmentLength: 10
-  segmentCount: 10
-  speed: 6
-  obstacleMinGap: 20
-  obstacleMaxGap: 32
-  boxHeight: 0.6
-  hurdleHeight: 0.3
-  barBottomHeight: 1.3
-  words:
-  - SMALL
-  - HOUSE
-  - GREEN
-  - WATER
-  - APPLE
-  - TIGER
-  - CLOUD
-  - LIGHT
-  - STONE
-  - RIVER
-  wordSpawnZ: 45
-  readLimitZ: 8
-  wordSpeed: 4.5
-  wordHeight: 2.6
-  pauseOptions:
-  - 0.5
-  - 0.5
-  - 3
-  - 10
-  - 15
-  - 20
-  keyboardInput: 1
-  jumpHeight: 0.9
-  eyeHeight: 1.7
-  duckEyeHeight: 1
---- !u!4 &1075392608
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1075392605}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 915794847}
-  - {fileID: 1075392608}
+  - {fileID: 1919615472}
+  - {fileID: 1744394738}

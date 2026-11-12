@@ -9,15 +9,17 @@ using UnityEngine;
 /// SZENE: Assets/CaveRunner/CaveRunner.unity (Menü "CaveShow > Runner-Szene neu erstellen").
 ///   Sie enthält das CAVE-Prefab und ein Objekt mit CaveRunner + CaveRunnerTracking
 ///   und ist unter File > Build Settings eingetragen -> File > Build And Run.
-///   Test am PC ohne CAVE: das CAVE-Objekt in der Szene deaktivieren,
-///   dann wird automatisch eine normale First-Person-Kamera benutzt.
+///
+/// ANSICHT: Sind mehrere Bildschirme angeschlossen (CAVE), wird auf die CAVE-Wände ausgegeben.
+///   An einem einzelnen Bildschirm (PC, Editor) gibt es automatisch die normale First-Person-Ansicht.
+///   Taste V schaltet um, im Inspector lässt sich die Ansicht bei "View" fest einstellen.
 ///
 /// PRINZIP: Die Person steht in der Mitte der CAVE, die Welt fährt auf sie zu (Laufband).
 ///          Beim Spurwechsel wird die Welt seitlich verschoben. Die CAVE selbst bleibt stehen,
 ///          sonst käme das Kopf-Tracking (Perspektive und Gesten) durcheinander.
 ///
 /// TASTEN (Betreuung/Test): Enter/Leertaste/R = Start, ←/→ = Spur, Leertaste/↑ = Springen, ↓ = Ducken,
-///                          Enter = Wort richtig, Backspace = Wort falsch, Esc = Beenden.
+///                          Enter = Wort richtig, Backspace = Wort falsch, V = Ansicht, Esc = Beenden.
 ///
 /// SCHNITTSTELLEN
 ///   Steuerung:      runner.StartGame(), SetLane(0..2), MoveLeft(), MoveRight(), Jump(), Duck()
@@ -62,9 +64,18 @@ public class CaveRunner : MonoBehaviour
     [Header("Steuerung / Kamera")]
     [Tooltip("Tasten für Betreuung und Test (siehe Kommentar oben).")]
     public bool keyboardInput = true;
+    public enum ViewMode { Auto, Cave, FirstPerson }
+    [Tooltip("Auto = CAVE-Wände, wenn mehrere Bildschirme angeschlossen sind, sonst First-Person-Ansicht (PC, Editor).")]
+    public ViewMode view = ViewMode.Auto;
     public float jumpHeight = 0.9f;
-    public float eyeHeight = 1.7f;        // nur PC-Kamera
-    public float duckEyeHeight = 1.0f;    // nur PC-Kamera
+    public float eyeHeight = 1.7f;        // nur First-Person-Kamera
+    public float duckEyeHeight = 1.0f;    // nur First-Person-Kamera
+
+    [Header("Materialien")]
+    [Tooltip("Vorlagen für alle Flächen. Müssen als Asset in der Szene hängen, sonst fehlt der Shader im Build (alles pink).")]
+    public Material surfaceMaterial;
+    [Tooltip("Vorlage für leuchtende Flächen (Emission eingeschaltet).")]
+    public Material glowMaterial;
 
     // =====================================================================
     //  Öffentlicher Zustand + Events
@@ -103,6 +114,8 @@ public class CaveRunner : MonoBehaviour
 
     Transform world;
     Camera pcCam;
+    Camera[] caveCams;
+    bool firstPerson;
     TextMesh hudText, bigText, actionText;
     readonly List<Transform> segments = new List<Transform>();
     readonly List<Obstacle> obstacles = new List<Obstacle>();
@@ -187,11 +200,15 @@ public class CaveRunner : MonoBehaviour
 
     void Awake()
     {
-        // Mit CAVE: Spiel genau auf die CAVE setzen (Ursprung = Mitte des CAVE-Bodens, Blick zur Frontwand).
-        // Ohne CAVE: normale First-Person-Kamera zum Testen am PC.
+        // Spiel genau auf die CAVE setzen (Ursprung = Mitte des CAVE-Bodens, Blick zur Frontwand).
         var cave = FindObjectOfType<HTW.CAVE.VirtualEnvironment>();
-        if (cave != null) transform.SetPositionAndRotation(cave.transform.position, cave.transform.rotation);
-        else SetupPcCamera();
+        if (cave != null)
+        {
+            transform.SetPositionAndRotation(cave.transform.position, cave.transform.rotation);
+            caveCams = cave.GetComponentsInChildren<Camera>(true);
+        }
+        // CAVE-Wände nur, wenn es eine CAVE gibt und mehr als ein Bildschirm angeschlossen ist.
+        SetFirstPerson(view == ViewMode.FirstPerson || (view == ViewMode.Auto && Display.displays.Length <= 1));
 
         world = new GameObject("World (bewegt sich)").transform;
         world.SetParent(transform, false);
@@ -232,18 +249,29 @@ public class CaveRunner : MonoBehaviour
         }
     }
 
+    /// <summary>Zwischen First-Person-Ansicht (ein Bildschirm) und Ausgabe auf die CAVE-Wände umschalten.</summary>
+    void SetFirstPerson(bool on)
+    {
+        firstPerson = on || caveCams == null; // ohne CAVE gibt es nur die First-Person-Ansicht
+        if (firstPerson && pcCam == null) SetupPcCamera();
+        if (pcCam != null) pcCam.enabled = firstPerson;
+        if (caveCams != null) foreach (var cam in caveCams) cam.enabled = !firstPerson;
+    }
+
     void SetupPcCamera()
     {
-        pcCam = Camera.main;
+        if (caveCams == null) pcCam = Camera.main;
         if (pcCam == null)
         {
-            pcCam = new GameObject("PC Camera (First Person)").AddComponent<Camera>();
-            pcCam.tag = "MainCamera";
-            pcCam.gameObject.AddComponent<AudioListener>();
+            pcCam = new GameObject("First Person Camera").AddComponent<Camera>();
+            if (FindObjectOfType<AudioListener>() == null) pcCam.gameObject.AddComponent<AudioListener>();
         }
+        pcCam.depth = 100f; // liegt über den CAVE-Kameras
         pcCam.fieldOfView = 75f;
         pcCam.nearClipPlane = 0.05f;
-        pcCam.transform.rotation = Quaternion.Euler(4f, 0f, 0f);
+        pcCam.clearFlags = CameraClearFlags.SolidColor;
+        pcCam.backgroundColor = RenderSettings.fogColor;
+        pcCam.transform.rotation = transform.rotation * Quaternion.Euler(4f, 0f, 0f);
     }
 
     Transform BuildSegment(int index, float z)
@@ -407,13 +435,14 @@ public class CaveRunner : MonoBehaviour
         if (shake > 0f) { shake -= Time.deltaTime; wobble = UnityEngine.Random.insideUnitSphere * 0.06f; }
         world.localPosition = new Vector3(-laneX, 0, 0) + wobble;
 
-        // In der CAVE springt und duckt sich die Person selbst, nur die PC-Kamera muss das nachmachen.
-        if (pcCam != null)
+        // In der CAVE springt und duckt sich die Person selbst, nur die First-Person-Kamera muss das nachmachen.
+        if (firstPerson)
             pcCam.transform.position = transform.TransformPoint(new Vector3(0, Mathf.Lerp(eyeHeight, duckEyeHeight, duckAmount) + jumpOffset, 0));
     }
 
     void ReadKeyboard()
     {
+        if (Input.GetKeyDown(KeyCode.V)) SetFirstPerson(!firstPerson);
         if (!IsPlaying)
         {
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.R)) StartGame();
@@ -530,14 +559,21 @@ public class CaveRunner : MonoBehaviour
     {
         var key = new Color(c.r, c.g, c.b, emission); // Emission im Alpha-Kanal als Schlüssel
         if (materials.TryGetValue(key, out var m)) return m;
-        if (baseMat == null)
+        var template = emission > 0f && glowMaterial != null ? glowMaterial : surfaceMaterial;
+        if (template == null)
         {
-            var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            baseMat = tmp.GetComponent<Renderer>().sharedMaterial;
-            tmp.SetActive(false);
-            Destroy(tmp);
+            // Notlösung ohne zugewiesene Materialien: funktioniert im Editor, im Build fehlt dann aber der Shader.
+            if (baseMat == null)
+            {
+                var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                baseMat = tmp.GetComponent<Renderer>().sharedMaterial;
+                tmp.SetActive(false);
+                Destroy(tmp);
+                Debug.LogWarning("CaveRunner: Materialien nicht zugewiesen – Szene über \"CaveShow > Runner-Szene neu erstellen\" erzeugen.", this);
+            }
+            template = baseMat;
         }
-        m = new Material(baseMat) { color = c };
+        m = new Material(template) { color = c };
         if (emission > 0f) { m.EnableKeyword("_EMISSION"); m.SetColor("_EmissionColor", c * emission); }
         materials[key] = m;
         return m;

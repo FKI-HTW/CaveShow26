@@ -5,10 +5,20 @@ es gibt noch keine Modelle oder Prefabs. Die können später Stück für Stück 
 
 ## Starten
 
-1. Projekt in Unity öffnen (2022.3.59f1).
-2. Oben im Menü: **CaveRunner → Demo-Szene erstellen (PC-Test)**
-   (oder „mit CAVE-Prefab“, dann ist das CAVE-Setup aus dem Sample schon drin).
-3. **Play** drücken.
+### Build and Run (Windows)
+
+1. Projekt in Unity 2022.3.59f1 öffnen. Beim ersten Öffnen wird automatisch
+   `Assets/CaveRunner/Scenes/CaveRunnerDemo.unity` erstellt und als **erste Szene** in die Build Settings eingetragen
+   (siehe Console: „CaveRunner: …“).
+2. **File → Build Settings…** → Plattform **Windows, Mac, Linux** wählen, Target Platform **Windows**
+   (falls nicht aktiv: „Switch Platform“). Dafür muss im Unity Hub das Modul *Windows Build Support* installiert sein.
+3. **File → Build And Run** (Strg+B) oder Menü **CaveRunner → Build and Run**.
+   Das Spiel landet in `Builds/Windows/CaveRunnerDemo.exe` und startet direkt. **Esc** beendet das Spiel.
+
+### Im Editor testen
+
+**CaveRunner → Demo-Szene öffnen**, dann **Play**.
+(„Demo-Szene mit CAVE-Prefab erstellen“ baut zusätzlich das CAVE-Setup aus dem Sample ein.)
 
 Alternativ: leeres GameObject in irgendeine Szene ziehen und `CaveRunnerGame` draufziehen.
 

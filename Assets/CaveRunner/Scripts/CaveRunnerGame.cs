@@ -205,6 +205,8 @@ namespace CaveRunner
 
         void Update()
         {
+            if (Input.GetKeyDown(KeyCode.Escape)) Application.Quit(); // Build beenden
+
             switch (State)
             {
                 case GameState.Start:

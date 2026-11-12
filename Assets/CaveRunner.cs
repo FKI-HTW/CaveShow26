@@ -15,8 +15,14 @@ using UnityEngine;
 /// PRINZIP: Die Person steht still in der Mitte der CAVE (z = 0), die Welt fährt auf sie zu (Laufband).
 ///          Beim Spurwechsel wird der CAVE-Rig seitlich verschoben.
 ///
+/// KINECT-GESTEN (über das Kopf-Tracking der CAVE, "Virtual Eyes"):
+///   Kopf/Körper nach links/rechts neigen = Spur links/rechts, in der Mitte stehen = mittlere Spur
+///   Kniebeuge + schnell aufrichten        = Springen
+///   tief ducken                           = Ducken
+///   Beim Start (und mit Taste C) wird die normale Standposition kalibriert -> gerade in die Mitte stellen!
+///
 /// TASTEN (Test): Enter/Leertaste = Start, ←/→ = Spur, Leertaste/↑ = Springen, ↓ = Ducken,
-///                Enter = Wort richtig, Backspace = Wort falsch, R = Neustart, Esc = Beenden.
+///                Enter = Wort richtig, Backspace = Wort falsch, C = Kalibrieren, R = Neustart, Esc = Beenden.
 ///
 /// SCHNITTSTELLEN
 ///   Tracking:       runner.MoveLeft(), MoveRight(), Jump(), Duck()
@@ -67,6 +73,21 @@ public class CaveRunner : MonoBehaviour
     public float jumpHeight = 0.9f;       // nur PC-Kamera
     public bool keyboardInput = true;
 
+    [Header("Kinect-Gesten (Kopf-Tracking)")]
+    public bool gestureControl = true;
+    [Tooltip("Leer = \"Virtual Eyes\" im CAVE-Prefab.")]
+    public Transform head;
+    [Tooltip("So weit (m) muss der Kopf zur Seite, damit die Spur wechselt.")]
+    public float leanThreshold = 0.15f;
+    [Tooltip("So weit (m) muss der Kopf unter die Standhöhe, um zu ducken.")]
+    public float duckThreshold = 0.35f;
+    [Tooltip("Mindest-Tiefe (m) der Kniebeuge vor dem Sprung.")]
+    public float jumpSquatDepth = 0.12f;
+    [Tooltip("So schnell (m/s) muss der Kopf nach oben, damit es als Sprung zählt.")]
+    public float jumpUpSpeed = 1.0f;
+    [Tooltip("Kopf-Werte in der Anzeige einblenden (zum Einstellen der Schwellen).")]
+    public bool showGestureDebug = true;
+
     // =====================================================================
     //  Öffentlicher Zustand + Events
     // =====================================================================
@@ -108,6 +129,10 @@ public class CaveRunner : MonoBehaviour
     List<string> wordQueue = new List<string>();
     int wordsShown;
     float roundTime, countdown, nextWordTime, nextObstacleIn = 30f;
+    Vector3 headPos, standPos;
+    float headVelY, squatTimer;
+    bool headReady, wasLow;
+    int leanZone = 1;
     float laneX, jumpTime = -1f, jumpOffset, duckTimer, duckAmount, actionTimer, shake;
 
     bool ControlsEnabled => GameState == State.Countdown || GameState == State.Running;
@@ -118,8 +143,16 @@ public class CaveRunner : MonoBehaviour
     //  Steuerung (für Tracking)
     // =====================================================================
 
-    public void MoveLeft() { if (ControlsEnabled && CurrentLane > 0) { CurrentLane--; ShowAction("Links"); } }
-    public void MoveRight() { if (ControlsEnabled && CurrentLane < 2) { CurrentLane++; ShowAction("Rechts"); } }
+    public void MoveLeft() => SetLane(CurrentLane - 1);
+    public void MoveRight() => SetLane(CurrentLane + 1);
+
+    public void SetLane(int lane)
+    {
+        lane = Mathf.Clamp(lane, 0, 2);
+        if (!ControlsEnabled || lane == CurrentLane) return;
+        ShowAction(lane < CurrentLane ? "Links" : "Rechts");
+        CurrentLane = lane;
+    }
 
     public void Jump()
     {
@@ -162,6 +195,7 @@ public class CaveRunner : MonoBehaviour
             int j = UnityEngine.Random.Range(i, wordQueue.Count);
             (wordQueue[i], wordQueue[j]) = (wordQueue[j], wordQueue[i]);
         }
+        Calibrate();
         countdown = 3f;
         SetState(State.Countdown);
     }
@@ -217,7 +251,13 @@ public class CaveRunner : MonoBehaviour
     void SetupCamera()
     {
         if (caveRig == null) { var go = GameObject.Find("CAVE"); if (go != null) caveRig = go.transform; }
-        if (caveRig != null) { caveStartPos = caveRig.position; return; }
+        if (caveRig != null)
+        {
+            caveStartPos = caveRig.position;
+            if (head == null) head = caveRig.Find("Virtual Eyes");
+            if (head == null) Debug.LogWarning("CaveRunner: \"Virtual Eyes\" nicht gefunden – Gestensteuerung aus.");
+            return;
+        }
 
         pcCam = Camera.main;
         if (pcCam == null)
@@ -346,6 +386,7 @@ public class CaveRunner : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Escape)) Application.Quit();
         if (keyboardInput) ReadKeyboard();
         float dt = Time.deltaTime;
+        if (gestureControl && head != null) ReadGestures(dt);
 
         if (GameState == State.Countdown)
         {
@@ -377,6 +418,8 @@ public class CaveRunner : MonoBehaviour
 
         hudText.text = GameState == State.Start ? "" :
             $"Zeit: {Mathf.CeilToInt(TimeLeft)} s     Richtig: {CorrectWords}/{words.Length}     Fehler: {WordErrors}/{maxWordErrors}     Treffer: {Hits}";
+        if (showGestureDebug && gestureControl && head != null)
+            hudText.text += $"\nKopf  seitlich: {headPos.x - standPos.x:+0.00;-0.00} m   Höhe: {headPos.y - standPos.y:+0.00;-0.00} m   hoch: {headVelY:+0.0;-0.0} m/s";
     }
 
     void LateUpdate()
@@ -396,6 +439,7 @@ public class CaveRunner : MonoBehaviour
 
     void ReadKeyboard()
     {
+        if (Input.GetKeyDown(KeyCode.C)) Calibrate();
         if (!ControlsEnabled)
         {
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.R)) StartGame();
@@ -492,6 +536,59 @@ public class CaveRunner : MonoBehaviour
         nextWordTime = roundTime + Mathf.Min(pauseOptions[UnityEngine.Random.Range(0, pauseOptions.Length)], maxPause);
 
         if (WordErrors >= maxWordErrors) SetState(State.Lost);
+    }
+
+    // =====================================================================
+    //  Kinect-Gesten aus der Kopfposition
+    // =====================================================================
+
+    void ReadGestures(float dt)
+    {
+        // Kopfposition relativ zur CAVE, leicht geglättet (Kinect zittert etwas)
+        Vector3 raw = head.localPosition;
+        if (!headReady) { headPos = raw; standPos = raw; headReady = true; }
+        float prevY = headPos.y;
+        headPos = Vector3.Lerp(headPos, raw, 1f - Mathf.Exp(-15f * dt));
+        headVelY = Mathf.Lerp(headVelY, (headPos.y - prevY) / Mathf.Max(dt, 0.0001f), 1f - Mathf.Exp(-20f * dt));
+        if (!ControlsEnabled) return;
+
+        // Spur: links neigen = links, Mitte = Mitte, rechts = rechts (mit etwas Puffer gegen Flackern)
+        // Nur beim Wechsel der Zone umschalten -> Tastatur funktioniert parallel weiter.
+        float dx = headPos.x - standPos.x;
+        int zone = dx < -leanThreshold ? 0 : dx > leanThreshold ? 2
+                 : Mathf.Abs(dx) < leanThreshold * 0.5f ? 1 : leanZone;
+        if (zone != leanZone) { leanZone = zone; SetLane(zone); }
+
+        float dy = standPos.y - headPos.y; // > 0 = tiefer als normal
+
+        // Springen: erst Kniebeuge, dann innerhalb kurzer Zeit schnell hoch (oder echter Sprung)
+        if (dy > jumpSquatDepth) squatTimer = 0.7f;
+        else if (squatTimer > 0f) squatTimer -= dt;
+        bool fastUp = headVelY > jumpUpSpeed;
+        if ((fastUp && squatTimer > 0f) || (headVelY > jumpUpSpeed * 1.3f && dy < -0.05f))
+        {
+            squatTimer = 0f;
+            Jump();
+        }
+
+        // Ducken: solange der Kopf tief ist (aber nicht, während man gerade hochschnellt)
+        bool low = dy > duckThreshold && headVelY < 0.5f;
+        if (low)
+        {
+            if (!wasLow) Duck();
+            else duckTimer = DuckDuration; // geduckt bleiben
+        }
+        wasLow = low;
+    }
+
+    /// <summary>Aktuelle Kopfposition als "normal stehen, mittlere Spur" merken.</summary>
+    public void Calibrate()
+    {
+        if (head == null) return;
+        headPos = standPos = head.localPosition;
+        headReady = true;
+        leanZone = 1;
+        ShowAction("Kalibriert");
     }
 
     // =====================================================================

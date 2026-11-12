@@ -3,29 +3,24 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// CAVE-RUNNER – Demo-Umgebung (First Person), alles in einer Datei.
+/// CAVE-RUNNER – das Spiel (First Person): Tunnel, Hindernisse, Wörter, Anzeige.
+/// Die Steuerung über das Kinect-Tracking macht <see cref="CaveRunnerTracking"/> auf demselben Objekt.
 ///
-/// BENUTZUNG
-///   1. Leeres GameObject in die Szene, dieses Skript draufziehen.
-///   2. Für die CAVE: CAVE-Prefab (Samples/CAVE/.../Example CAVE Setup/Prefabs/CAVE) in die Szene ziehen,
-///      Name muss "CAVE" bleiben (oder im Inspector bei "Cave Rig" eintragen).
-///      Ohne CAVE wird automatisch eine normale First-Person-Kamera zum Testen am PC benutzt.
-///   3. Szene unter File > Build Settings hinzufügen -> File > Build And Run.
+/// SZENE: Assets/CaveRunner/CaveRunner.unity (Menü "CaveShow > Runner-Szene neu erstellen").
+///   Sie enthält das CAVE-Prefab und ein Objekt mit CaveRunner + CaveRunnerTracking
+///   und ist unter File > Build Settings eingetragen -> File > Build And Run.
+///   Test am PC ohne CAVE: das CAVE-Objekt in der Szene deaktivieren,
+///   dann wird automatisch eine normale First-Person-Kamera benutzt.
 ///
-/// PRINZIP: Die Person steht still in der Mitte der CAVE (z = 0), die Welt fährt auf sie zu (Laufband).
-///          Beim Spurwechsel wird der CAVE-Rig seitlich verschoben.
+/// PRINZIP: Die Person steht in der Mitte der CAVE, die Welt fährt auf sie zu (Laufband).
+///          Beim Spurwechsel wird die Welt seitlich verschoben. Die CAVE selbst bleibt stehen,
+///          sonst käme das Kopf-Tracking (Perspektive und Gesten) durcheinander.
 ///
-/// KINECT-GESTEN (über das Kopf-Tracking der CAVE, "Virtual Eyes"):
-///   Kopf/Körper nach links/rechts neigen = Spur links/rechts, in der Mitte stehen = mittlere Spur
-///   Kniebeuge + schnell aufrichten        = Springen
-///   tief ducken                           = Ducken
-///   Beim Start (und mit Taste C) wird die normale Standposition kalibriert -> gerade in die Mitte stellen!
-///
-/// TASTEN (Test): Enter/Leertaste = Start, ←/→ = Spur, Leertaste/↑ = Springen, ↓ = Ducken,
-///                Enter = Wort richtig, Backspace = Wort falsch, C = Kalibrieren, R = Neustart, Esc = Beenden.
+/// TASTEN (Betreuung/Test): Enter/Leertaste/R = Start, ←/→ = Spur, Leertaste/↑ = Springen, ↓ = Ducken,
+///                          Enter = Wort richtig, Backspace = Wort falsch, Esc = Beenden.
 ///
 /// SCHNITTSTELLEN
-///   Tracking:       runner.MoveLeft(), MoveRight(), Jump(), Duck()
+///   Steuerung:      runner.StartGame(), SetLane(0..2), MoveLeft(), MoveRight(), Jump(), Duck()
 ///   Worterkennung:  runner.WordAppeared += wort => ...;   runner.SubmitRecognizedWord("small");
 /// </summary>
 public class CaveRunner : MonoBehaviour
@@ -64,29 +59,12 @@ public class CaveRunner : MonoBehaviour
     public float wordHeight = 2.6f;
     public float[] pauseOptions = { 0.5f, 0.5f, 3f, 10f, 15f, 20f };
 
-    [Header("CAVE / Kamera")]
-    [Tooltip("Leer = Objekt mit dem Namen \"CAVE\" wird gesucht.")]
-    public Transform caveRig;
-    public bool caveFollowsLane = true;
+    [Header("Steuerung / Kamera")]
+    [Tooltip("Tasten für Betreuung und Test (siehe Kommentar oben).")]
+    public bool keyboardInput = true;
+    public float jumpHeight = 0.9f;
     public float eyeHeight = 1.7f;        // nur PC-Kamera
     public float duckEyeHeight = 1.0f;    // nur PC-Kamera
-    public float jumpHeight = 0.9f;       // nur PC-Kamera
-    public bool keyboardInput = true;
-
-    [Header("Kinect-Gesten (Kopf-Tracking)")]
-    public bool gestureControl = true;
-    [Tooltip("Leer = \"Virtual Eyes\" im CAVE-Prefab.")]
-    public Transform head;
-    [Tooltip("So weit (m) muss der Kopf zur Seite, damit die Spur wechselt.")]
-    public float leanThreshold = 0.15f;
-    [Tooltip("So weit (m) muss der Kopf unter die Standhöhe, um zu ducken.")]
-    public float duckThreshold = 0.35f;
-    [Tooltip("Mindest-Tiefe (m) der Kniebeuge vor dem Sprung.")]
-    public float jumpSquatDepth = 0.12f;
-    [Tooltip("So schnell (m/s) muss der Kopf nach oben, damit es als Sprung zählt.")]
-    public float jumpUpSpeed = 1.0f;
-    [Tooltip("Kopf-Werte in der Anzeige einblenden (zum Einstellen der Schwellen).")]
-    public bool showGestureDebug = true;
 
     // =====================================================================
     //  Öffentlicher Zustand + Events
@@ -94,12 +72,19 @@ public class CaveRunner : MonoBehaviour
 
     public enum State { Start, Countdown, Running, Won, Lost }
     public State GameState { get; private set; }
+    /// <summary>Countdown oder Runde läuft -> Spur, Springen und Ducken sind aktiv.</summary>
+    public bool IsPlaying => GameState == State.Countdown || GameState == State.Running;
     public int CurrentLane { get; private set; } = 1;
     public int CorrectWords { get; private set; }
     public int WordErrors { get; private set; }
     public int Hits { get; private set; }
     public float TimeLeft => Mathf.Max(0f, roundDuration - roundTime);
     public string CurrentWord => activeBoard?.word;
+
+    /// <summary>Zeile unter Titel/Ergebnis: wie die nächste Runde gestartet wird.</summary>
+    public string StartHint { get; set; } = "Enter = Start";
+    /// <summary>Zusätzliche Zeile unter der Anzeige (z. B. Tracking-Werte zum Einstellen).</summary>
+    public string InfoLine { get; set; } = "";
 
     public event Action<string> WordAppeared;
     public event Action<string, bool> WordFinished; // (Wort, richtig?)
@@ -116,9 +101,8 @@ public class CaveRunner : MonoBehaviour
     //  Interne Variablen
     // =====================================================================
 
-    Transform world, rig;
+    Transform world;
     Camera pcCam;
-    Vector3 caveStartPos;
     TextMesh hudText, bigText, actionText;
     readonly List<Transform> segments = new List<Transform>();
     readonly List<Obstacle> obstacles = new List<Obstacle>();
@@ -129,41 +113,39 @@ public class CaveRunner : MonoBehaviour
     List<string> wordQueue = new List<string>();
     int wordsShown;
     float roundTime, countdown, nextWordTime, nextObstacleIn = 30f;
-    Vector3 headPos, standPos;
-    float headVelY, squatTimer;
-    bool headReady, wasLow;
-    int leanZone = 1;
     float laneX, jumpTime = -1f, jumpOffset, duckTimer, duckAmount, actionTimer, shake;
 
-    bool ControlsEnabled => GameState == State.Countdown || GameState == State.Running;
     bool IsDucking => duckTimer > 0f;
     bool IsAirborne => jumpTime >= 0f && jumpOffset > 0.15f;
 
     // =====================================================================
-    //  Steuerung (für Tracking)
+    //  Steuerung (Tracking und Tasten)
     // =====================================================================
 
     public void MoveLeft() => SetLane(CurrentLane - 1);
     public void MoveRight() => SetLane(CurrentLane + 1);
 
+    /// <summary>Spur wählen: 0 = links, 1 = Mitte, 2 = rechts.</summary>
     public void SetLane(int lane)
     {
         lane = Mathf.Clamp(lane, 0, 2);
-        if (!ControlsEnabled || lane == CurrentLane) return;
+        if (!IsPlaying || lane == CurrentLane) return;
         ShowAction(lane < CurrentLane ? "Links" : "Rechts");
         CurrentLane = lane;
     }
 
     public void Jump()
     {
-        if (!ControlsEnabled || jumpTime >= 0f) return;
+        if (!IsPlaying || jumpTime >= 0f) return;
         duckTimer = 0f; jumpTime = 0f; ShowAction("Sprung");
     }
 
+    /// <summary>Ducken. Solange die Person unten bleibt, einfach weiter aufrufen.</summary>
     public void Duck()
     {
-        if (!ControlsEnabled) return;
-        jumpTime = -1f; jumpOffset = 0f; duckTimer = DuckDuration; ShowAction("Ducken");
+        if (!IsPlaying) return;
+        if (!IsDucking) ShowAction("Ducken");
+        jumpTime = -1f; jumpOffset = 0f; duckTimer = DuckDuration;
     }
 
     // =====================================================================
@@ -181,7 +163,7 @@ public class CaveRunner : MonoBehaviour
 
     public void StartGame()
     {
-        if (ControlsEnabled) return;
+        if (IsPlaying) return;
         foreach (var o in obstacles) Destroy(o.t.gameObject);
         foreach (var b in boards) Destroy(b.t.gameObject);
         obstacles.Clear(); boards.Clear(); activeBoard = null;
@@ -195,7 +177,6 @@ public class CaveRunner : MonoBehaviour
             int j = UnityEngine.Random.Range(i, wordQueue.Count);
             (wordQueue[i], wordQueue[j]) = (wordQueue[j], wordQueue[i]);
         }
-        Calibrate();
         countdown = 3f;
         SetState(State.Countdown);
     }
@@ -206,10 +187,14 @@ public class CaveRunner : MonoBehaviour
 
     void Awake()
     {
+        // Mit CAVE: Spiel genau auf die CAVE setzen (Ursprung = Mitte des CAVE-Bodens, Blick zur Frontwand).
+        // Ohne CAVE: normale First-Person-Kamera zum Testen am PC.
+        var cave = FindObjectOfType<HTW.CAVE.VirtualEnvironment>();
+        if (cave != null) transform.SetPositionAndRotation(cave.transform.position, cave.transform.rotation);
+        else SetupPcCamera();
+
         world = new GameObject("World (bewegt sich)").transform;
         world.SetParent(transform, false);
-        rig = new GameObject("Rig (folgt Spur)").transform;
-        rig.SetParent(transform, false);
 
         // Atmosphäre: dunkel + Nebel (versteckt das "Aufploppen" hinten)
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
@@ -230,12 +215,11 @@ public class CaveRunner : MonoBehaviour
         for (int i = 0; i < segmentCount; i++) segments.Add(BuildSegment(i, DespawnZ + i * segmentLength));
         BuildReadLimit();
 
-        // Text in der 3D-Welt (sichtbar auf den CAVE-Wänden), hängt am Rig
-        hudText = MakeText(rig, new Vector3(0, 2.9f, 6f), 0.03f, Color.white);
-        bigText = MakeText(rig, new Vector3(0, 1.8f, 6f), 0.05f, new Color(1f, 0.85f, 0.3f));
-        actionText = MakeText(rig, new Vector3(0, 1.0f, 4f), 0.025f, new Color(0.6f, 0.9f, 1f));
+        // Text in der 3D-Welt (sichtbar auf der Frontwand der CAVE), bewegt sich nicht mit
+        hudText = MakeText(transform, new Vector3(0, 2.9f, 6f), 0.03f, Color.white);
+        bigText = MakeText(transform, new Vector3(0, 1.8f, 6f), 0.05f, new Color(1f, 0.85f, 0.3f));
+        actionText = MakeText(transform, new Vector3(0, 1.0f, 4f), 0.025f, new Color(0.6f, 0.9f, 1f));
 
-        SetupCamera();
         SetState(State.Start);
     }
 
@@ -248,17 +232,8 @@ public class CaveRunner : MonoBehaviour
         }
     }
 
-    void SetupCamera()
+    void SetupPcCamera()
     {
-        if (caveRig == null) { var go = GameObject.Find("CAVE"); if (go != null) caveRig = go.transform; }
-        if (caveRig != null)
-        {
-            caveStartPos = caveRig.position;
-            if (head == null) head = caveRig.Find("Virtual Eyes");
-            if (head == null) Debug.LogWarning("CaveRunner: \"Virtual Eyes\" nicht gefunden – Gestensteuerung aus.");
-            return;
-        }
-
         pcCam = Camera.main;
         if (pcCam == null)
         {
@@ -310,7 +285,7 @@ public class CaveRunner : MonoBehaviour
     void BuildReadLimit()
     {
         var t = new GameObject("Lesegrenze").transform;
-        t.SetParent(transform, false);
+        t.SetParent(world, false);
         t.localPosition = new Vector3(0, 0, readLimitZ);
         var m = Mat(new Color(1f, 0.55f, 0.1f), 1.5f);
         float W = tunnelWidth;
@@ -349,7 +324,7 @@ public class CaveRunner : MonoBehaviour
     void SpawnWord(string word)
     {
         var t = new GameObject("Wort " + word).transform;
-        t.SetParent(transform, false);
+        t.SetParent(world, false);
         t.localPosition = new Vector3(0, wordHeight, wordSpawnZ);
         var frame = Box(t, Vector3.zero, new Vector3(3.2f, 1.1f, 0.1f), Mat(new Color(1f, 0.6f, 0.15f), 1.2f));
         Box(t, new Vector3(0, 0, -0.06f), new Vector3(3f, 0.9f, 0.05f), Mat(new Color(0.98f, 0.95f, 0.88f), 0.3f));
@@ -369,16 +344,21 @@ public class CaveRunner : MonoBehaviour
     void SetState(State s)
     {
         GameState = s;
-        switch (s)
-        {
-            case State.Start: bigText.text = "CAVE-RUNNER\n\nEnter / Leertaste = Start"; break;
-            case State.Running: bigText.text = ""; break;
-            case State.Won: bigText.text = $"GEWONNEN!\n{CorrectWords} von {words.Length} richtig\n\nR = Neustart"; break;
-            case State.Lost:
-                bigText.text = (WordErrors >= maxWordErrors ? "VERLOREN!\n3 Wortfehler" : $"VERLOREN!\nnur {CorrectWords} von {words.Length} richtig") + "\n\nR = Neustart";
-                break;
-        }
         StateChanged?.Invoke(s);
+    }
+
+    string BigText()
+    {
+        switch (GameState)
+        {
+            case State.Start: return "CAVE-RUNNER\n\n" + StartHint;
+            case State.Countdown: return Mathf.CeilToInt(countdown).ToString();
+            case State.Won: return $"GEWONNEN!\n{CorrectWords} von {words.Length} richtig\n\n{StartHint}";
+            case State.Lost:
+                return (WordErrors >= maxWordErrors ? $"VERLOREN!\n{WordErrors} Wortfehler" : $"VERLOREN!\nnur {CorrectWords} von {words.Length} richtig")
+                     + "\n\n" + StartHint;
+            default: return "";
+        }
     }
 
     void Update()
@@ -386,12 +366,10 @@ public class CaveRunner : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Escape)) Application.Quit();
         if (keyboardInput) ReadKeyboard();
         float dt = Time.deltaTime;
-        if (gestureControl && head != null) ReadGestures(dt);
 
         if (GameState == State.Countdown)
         {
             countdown -= dt;
-            bigText.text = countdown > 0f ? Mathf.CeilToInt(countdown).ToString() : "LOS!";
             if (countdown <= 0f) SetState(State.Running);
         }
         else if (GameState == State.Running)
@@ -416,31 +394,27 @@ public class CaveRunner : MonoBehaviour
         duckAmount = Mathf.MoveTowards(duckAmount, IsDucking ? 1f : 0f, 6f * dt);
         if (actionTimer > 0f && (actionTimer -= dt) <= 0f) actionText.text = "";
 
+        bigText.text = BigText();
         hudText.text = GameState == State.Start ? "" :
             $"Zeit: {Mathf.CeilToInt(TimeLeft)} s     Richtig: {CorrectWords}/{words.Length}     Fehler: {WordErrors}/{maxWordErrors}     Treffer: {Hits}";
-        if (showGestureDebug && gestureControl && head != null)
-            hudText.text += $"\nKopf  seitlich: {headPos.x - standPos.x:+0.00;-0.00} m   Höhe: {headPos.y - standPos.y:+0.00;-0.00} m   hoch: {headVelY:+0.0;-0.0} m/s";
+        if (!string.IsNullOrEmpty(InfoLine)) hudText.text += "\n" + InfoLine;
     }
 
     void LateUpdate()
     {
-        // Rig (HUD), CAVE und PC-Kamera folgen der Spur
-        rig.localPosition = new Vector3(laneX, 0, 0);
-        if (caveRig != null && caveFollowsLane)
-            caveRig.position = caveStartPos + transform.TransformVector(new Vector3(laneX, 0, 0));
+        // Spurwechsel: die Welt rutscht zur Seite, Person und CAVE bleiben stehen. Bei einem Treffer wackelt sie kurz.
+        Vector3 wobble = Vector3.zero;
+        if (shake > 0f) { shake -= Time.deltaTime; wobble = UnityEngine.Random.insideUnitSphere * 0.06f; }
+        world.localPosition = new Vector3(-laneX, 0, 0) + wobble;
+
+        // In der CAVE springt und duckt sich die Person selbst, nur die PC-Kamera muss das nachmachen.
         if (pcCam != null)
-        {
-            float y = Mathf.Lerp(eyeHeight, duckEyeHeight, duckAmount) + jumpOffset;
-            Vector3 wobble = Vector3.zero;
-            if (shake > 0f) { shake -= Time.deltaTime; wobble = UnityEngine.Random.insideUnitSphere * 0.06f; }
-            pcCam.transform.position = transform.TransformPoint(new Vector3(laneX, y, 0)) + wobble;
-        }
+            pcCam.transform.position = transform.TransformPoint(new Vector3(0, Mathf.Lerp(eyeHeight, duckEyeHeight, duckAmount) + jumpOffset, 0));
     }
 
     void ReadKeyboard()
     {
-        if (Input.GetKeyDown(KeyCode.C)) Calibrate();
-        if (!ControlsEnabled)
+        if (!IsPlaying)
         {
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.R)) StartGame();
             return;
@@ -539,63 +513,11 @@ public class CaveRunner : MonoBehaviour
     }
 
     // =====================================================================
-    //  Kinect-Gesten aus der Kopfposition
-    // =====================================================================
-
-    void ReadGestures(float dt)
-    {
-        // Kopfposition relativ zur CAVE, leicht geglättet (Kinect zittert etwas)
-        Vector3 raw = head.localPosition;
-        if (!headReady) { headPos = raw; standPos = raw; headReady = true; }
-        float prevY = headPos.y;
-        headPos = Vector3.Lerp(headPos, raw, 1f - Mathf.Exp(-15f * dt));
-        headVelY = Mathf.Lerp(headVelY, (headPos.y - prevY) / Mathf.Max(dt, 0.0001f), 1f - Mathf.Exp(-20f * dt));
-        if (!ControlsEnabled) return;
-
-        // Spur: links neigen = links, Mitte = Mitte, rechts = rechts (mit etwas Puffer gegen Flackern)
-        // Nur beim Wechsel der Zone umschalten -> Tastatur funktioniert parallel weiter.
-        float dx = headPos.x - standPos.x;
-        int zone = dx < -leanThreshold ? 0 : dx > leanThreshold ? 2
-                 : Mathf.Abs(dx) < leanThreshold * 0.5f ? 1 : leanZone;
-        if (zone != leanZone) { leanZone = zone; SetLane(zone); }
-
-        float dy = standPos.y - headPos.y; // > 0 = tiefer als normal
-
-        // Springen: erst Kniebeuge, dann innerhalb kurzer Zeit schnell hoch (oder echter Sprung)
-        if (dy > jumpSquatDepth) squatTimer = 0.7f;
-        else if (squatTimer > 0f) squatTimer -= dt;
-        bool fastUp = headVelY > jumpUpSpeed;
-        if ((fastUp && squatTimer > 0f) || (headVelY > jumpUpSpeed * 1.3f && dy < -0.05f))
-        {
-            squatTimer = 0f;
-            Jump();
-        }
-
-        // Ducken: solange der Kopf tief ist (aber nicht, während man gerade hochschnellt)
-        bool low = dy > duckThreshold && headVelY < 0.5f;
-        if (low)
-        {
-            if (!wasLow) Duck();
-            else duckTimer = DuckDuration; // geduckt bleiben
-        }
-        wasLow = low;
-    }
-
-    /// <summary>Aktuelle Kopfposition als "normal stehen, mittlere Spur" merken.</summary>
-    public void Calibrate()
-    {
-        if (head == null) return;
-        headPos = standPos = head.localPosition;
-        headReady = true;
-        leanZone = 1;
-        ShowAction("Kalibriert");
-    }
-
-    // =====================================================================
     //  Hilfsfunktionen
     // =====================================================================
 
-    void ShowAction(string text) => ShowAction(text, new Color(0.6f, 0.9f, 1f));
+    /// <summary>Kurze Meldung unten in der Anzeige (z. B. "Sprung").</summary>
+    public void ShowAction(string text) => ShowAction(text, new Color(0.6f, 0.9f, 1f));
 
     void ShowAction(string text, Color color)
     {

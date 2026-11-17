@@ -251,10 +251,10 @@ public class CaveRunner : MonoBehaviour
 
         // Atmosphäre: dunkel + Nebel (versteckt das "Aufploppen" hinten)
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-        RenderSettings.ambientLight = new Color(0.35f, 0.32f, 0.3f);
+        RenderSettings.ambientLight = new Color(0.6f, 0.6f, 0.6f);
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
-        RenderSettings.fogColor = new Color(0.08f, 0.07f, 0.07f);
+        RenderSettings.fogColor = new Color(0.1f, 0.1f, 0.11f);
         RenderSettings.fogStartDistance = 35f;
         RenderSettings.fogEndDistance = SpawnZ + 5f;
         if (FindObjectOfType<Light>() == null)
@@ -320,37 +320,21 @@ public class CaveRunner : MonoBehaviour
 
     Transform BuildSegment(int index, float z)
     {
+        // Bewusst schlicht: Boden, zwei Wände, Decke – jeweils einfarbig.
+        // Die gestrichelten Spurlinien bleiben, weil man sonst nicht sieht, dass man sich bewegt.
         var seg = new GameObject("Segment " + index).transform;
         seg.SetParent(world, false);
         seg.localPosition = new Vector3(0, 0, z);
         float L = segmentLength, W = tunnelWidth, H = tunnelHeight;
-        var wall = index % 2 == 0 ? new Color(0.36f, 0.3f, 0.26f) : new Color(0.3f, 0.25f, 0.22f);
-        var rib = new Color(0.45f, 0.33f, 0.2f);
+        var wall = Mat(new Color(0.42f, 0.42f, 0.45f));
         var line = Mat(new Color(0.95f, 0.9f, 0.6f), 0.6f);
 
-        Box(seg, new Vector3(0, -0.05f, 0), new Vector3(W, 0.1f, L), Mat(new Color(0.22f, 0.2f, 0.19f)));
-        Box(seg, new Vector3(-0.8f, 0.01f, 0), new Vector3(0.08f, 0.02f, L * 0.45f), line);
+        Box(seg, new Vector3(0, -0.05f, 0), new Vector3(W, 0.1f, L), Mat(new Color(0.25f, 0.25f, 0.27f)));   // Boden
+        Box(seg, new Vector3(-0.8f, 0.01f, 0), new Vector3(0.08f, 0.02f, L * 0.45f), line);                  // Spurlinien
         Box(seg, new Vector3(0.8f, 0.01f, 0), new Vector3(0.08f, 0.02f, L * 0.45f), line);
-        Box(seg, new Vector3(-W / 2 - 0.1f, H / 2, 0), new Vector3(0.2f, H, L), Mat(wall));
-        Box(seg, new Vector3(W / 2 + 0.1f, H / 2, 0), new Vector3(0.2f, H, L), Mat(wall));
-        Box(seg, new Vector3(0, H + 0.1f, 0), new Vector3(W + 0.4f, 0.2f, L), Mat(new Color(0.18f, 0.16f, 0.15f)));
-
-        float zr = -L / 2 + 0.2f; // Holzbogen
-        Box(seg, new Vector3(-W / 2 + 0.15f, H / 2, zr), new Vector3(0.3f, H, 0.3f), Mat(rib));
-        Box(seg, new Vector3(W / 2 - 0.15f, H / 2, zr), new Vector3(0.3f, H, 0.3f), Mat(rib));
-        Box(seg, new Vector3(0, H - 0.15f, zr), new Vector3(W, 0.3f, 0.3f), Mat(rib));
-
-        if (index % 2 == 0) // Lampe
-        {
-            Box(seg, new Vector3(0, H - 0.05f, 0), new Vector3(0.6f, 0.1f, 1.2f), Mat(new Color(1f, 0.8f, 0.45f), 2f));
-            var light = new GameObject("Light").AddComponent<Light>();
-            light.transform.SetParent(seg, false);
-            light.transform.localPosition = new Vector3(0, H - 0.6f, 0);
-            light.type = LightType.Point;
-            light.range = 14f;
-            light.intensity = 1.6f;
-            light.color = new Color(1f, 0.8f, 0.55f);
-        }
+        Box(seg, new Vector3(-W / 2 - 0.1f, H / 2, 0), new Vector3(0.2f, H, L), wall);                       // Wand links
+        Box(seg, new Vector3(W / 2 + 0.1f, H / 2, 0), new Vector3(0.2f, H, L), wall);                        // Wand rechts
+        Box(seg, new Vector3(0, H + 0.1f, 0), new Vector3(W + 0.4f, 0.2f, L), Mat(new Color(0.3f, 0.3f, 0.32f))); // Decke
         return seg;
     }
 
